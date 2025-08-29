@@ -1,0 +1,148 @@
+hj, [29-08-2025 08:06 AM]
+📝 📝 Text: "——— ✦ 001 ✦ ———
+📁 Title : [A..."
+
+hj, [29-08-2025 08:06 AM]
+📝 📝 Text: "——— ✦ 002 ✦ ———
+📁 Title : [A..."
+Processing message 17 with media type: CONSTRUCTOR_ID
+[2025-08-29T02:36:20.991] [INFO] - [Starting direct file download in chunks of 131072 at 0, stride 131072]
+📝 Text: "——— ✦ 003 ✦ ———
+🎞️ Title : [..."
+Processing message 22 with media type: CONSTRUCTOR_ID
+[2025-08-29T02:36:20.991] [INFO] - [Starting direct file download in chunks of 524288 at 0, stride 524288]
+📝 Text: "——— ✦ 004 ✦ ———
+🎞️ Title : [..."
+Processing message 26 with media type: CONSTRUCTOR_ID
+[2025-08-29T02:36:20.992] [INFO] - [Starting direct file download in chunks of 524288 at 0, stride 524288]
+📝 Text: "——— ✦ 005 ✦ ———
+🎞️ Title : [..."
+
+hj, [29-08-2025 08:06 AM]
+📝 Processing message 30 with media type: CONSTRUCTOR_ID
+[2025-08-29T02:36:20.993] [INFO] - [Starting direct file download in chunks of 524288 at 0, stride 524288]
+📝 Text: "——— ✦ 006 ✦ ———
+🎞️ Title : [..."
+Processing message 34 with media type: CONSTRUCTOR_ID
+[2025-08-29T02:36:20.993] [INFO] - [Starting direct file download in chunks of 524288 at 0, stride 524288]
+📝 Text: "——— ✦ 007 ✦ ———
+🎞️ Title : [..."
+Processing message 38 with media type: CONSTRUCTOR_ID
+
+hj, [29-08-2025 08:06 AM]
+📝 [2025-08-29T02:36:20.994] [INFO] - [Starting direct file download in chunks of 524288 at 0, stride 524288]
+📝 Text: "——— ✦ 008 ✦ ———
+🎞️ Title : [..."
+Processing message 42 with media type: CONSTRUCTOR_ID
+[2025-08-29T02:36:20.994] [INFO] - [Starting direct file download in chunks of 524288 at 0, stride 524288]
+📝 Text: "——— ✦ 009 ✦ ———
+🎞️ Title : [..."
+Processing message 46 with media type: CONSTRUCTOR_ID
+[2025-08-29T02:36:20.994] [INFO] - [Starting direct file download in chunks of 524288 at 0, stride 524288]
+
+hj, [29-08-2025 08:06 AM]
+📝 [2025-08-29T02:36:21.205] [INFO] - [Connection to 91.108.56.150:443/TCPFull complete!]
+
+hj, [29-08-2025 08:06 AM]
+📝 [2025-08-29T02:36:21.654] [INFO] - [File lives in another DC]
+[2025-08-29T02:36:21.655] [INFO] - [Connecting to 149.154.175.59:443/TCPFull...]
+[2025-08-29T02:36:21.656] [INFO] - [File lives in another DC]
+[2025-08-29T02:36:21.657] [INFO] - [File lives in another DC]
+
+hj, [29-08-2025 08:06 AM]
+📝 [2025-08-29T02:36:21.660] [INFO] - [File lives in another DC]
+[2025-08-29T02:36:21.661] [INFO] - [File lives in another DC]
+[2025-08-29T02:36:21.663] [INFO] - [File lives in another DC]
+
+hj, [29-08-2025 08:06 AM]
+📝 [2025-08-29T02:36:21.674] [INFO] - [File lives in another DC]
+
+hj, [29-08-2025 08:06 AM]
+📝 [2025-08-29T02:36:21.680] [INFO] - [File lives in another DC]
+[2025-08-29T02:36:21.681] [INFO] - [File lives in another DC]
+
+hj, [29-08-2025 08:06 AM]
+📝 [2025-08-29T02:36:23.094] [INFO] - [Exporting authorization for data center 149.154.175.59 with layer 198]
+
+hj, [29-08-2025 08:06 AM]
+📝 [2025-08-29T02:36:23.094] [INFO] - [Connection to 149.154.175.59:443/TCPFull complete!]
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 05  Transmissi.mp4_38.mp4: 0.37% (7.0 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📝 ✅ Downloaded: [Advance Communication] Lecture Planner  ESE Mains   Advance_17.pdf (0.0 Mbps)
+✅ Download complete 3/10: Message 17 (0.0 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 07  Optical Fi.mp4_46.mp4: 0.41% (7.8 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 02  Mode Theor.mp4_26.mp4: 0.05% (1.4 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 04  Transmissi.mp4_34.mp4: 0.44% (7.7 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 06  Optical Fi.mp4_42.mp4: 0.44% (6.9 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 01  Introducti.mp4_22.mp4: 0.49% (7.6 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 01  Introducti.mp4_22.mp4: 0.05% (1.3 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 02  Mode Theor.mp4_26.mp4: 0.51% (7.5 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 05  Transmissi.mp4_38.mp4: 0.42% (7.5 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 07  Optical Fi.mp4_46.mp4: 0.45% (8.2 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 04  Transmissi.mp4_34.mp4: 0.09% (2.5 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 04  Transmissi.mp4_34.mp4: 0.49% (8.2 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 06  Optical Fi.mp4_42.mp4: 0.48% (7.4 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 01  Introducti.mp4_22.mp4: 0.54% (8.1 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 05  Transmissi.mp4_38.mp4: 0.08% (2.4 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 02  Mode Theor.mp4_26.mp4: 0.56% (8.0 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 07  Optical Fi.mp4_46.mp4: 0.49% (8.7 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 05  Transmissi.mp4_38.mp4: 0.46% (8.0 Mbps)
+
+hj, [29-08-2025 08:06 AM]
+📊 Download Progress:
+[1/1] [Advance Communication] Optical Communication 03  Transmissi.mp4_30.mp4: 0.60% (8.6 Mbps)

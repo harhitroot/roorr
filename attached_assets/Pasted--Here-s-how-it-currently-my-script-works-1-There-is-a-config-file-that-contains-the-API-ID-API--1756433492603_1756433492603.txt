@@ -1,0 +1,31 @@
+
+
+Here’s how it currently my script works:1. There is a config file that contains the API ID, API hash, and session ID.2. The script asks for the user’s Telegram phone number in the terminal, then sends a login code (OTP) to Telegram. The user enters this OTP in the terminal.3. The script uses the user’s Telegram login to access and download/upload messages and media.4. After login, the script asks from which channel or chat the user wants to download media.5. The user can choose whether tDownload all media from that chat/channel,Download a specific message, orDownload from a specific message ID until the end.6. Next, the script asks whether the user wants to:Save the media locally, orDownload and then upload it to another channel.If the user selects upload, the script asks for the destination channel.Once all selections are made, the download/upload process starts
+
+
+integrate Node.js Telegram script with Telegram botGoal: Integrate an existing Node.js Telegram media script (exactly as-is from the provided GitHub repo, cloned via git clone) with a Telegram bot interface so users can run the same CLI workflow inside Telegram chat with the bot. Do not modify the script’s internal logic. Use the repo exactly as cloned (no rewriting of core logic). If a wrapper is required, it must be a minimal launcher that calls the repo’s CLI entrypoints and does not change any repository files
+.---Key Requirements
+1. Use the same repo configuration & features:The bot must use the same configuration file (api_id, api_hash, session_id) as the original script.The bot must fully support parallel downloading/uploading, handling multiple files, captions, restricted messages, and all media types — exactly like the script.No features/options may be removed or altered. The only change is that input/output must happen inside the Telegram bot instead of the terminal.
+2. Clone-only policy:git clone <REPO_URL>cd <repo-folder>No modification of repo code. The assistant may only create a minimal wrapper (outside the repo) to pipe Telegram bot messages into the CLI process and forward outputs back to the user.
+3. Interaction flow (same as CLI):Bot asks for phone number → forwards to script.Bot asks for OTP → forwards to script.After successful login, bot shows the same confirmation as CLI.Bot then asks for channel/chat ID, download options (all, single message, range), and destination (local or upload).Bot mirrors progress and outputs from the script (Downloading..., Uploading..., etc.).
+4. Download & Upload behavior:Must exactly replicate CLI behavior, including parallel downloads, retaining captions, supporting restricted media, and handling all file types.Bot should not interfere with or change the way the script processes media.
+5. Security & consent:Bot must warn the user that it will log into their Telegram account.Require explicit “I consent” before login.OTPs, session IDs, or logs must not be exposed beyond what the CLI normally prints.
+6. Error handling:All CLI errors must be forwarded to the bot user.If wrapper errors occur, convert them into clear messages without altering script outputs.
+7. Testing deliverable:Provide logs of a full run showing login, download, and upload.Show parallel downloading working through the bot interface.Confirm captions and media integrity after re-upload
+.---Example Bot Interaction
+1. Bot: Enter your phone number (+CountryCodePhone):
+2. User: +911234567890
+3. Bot: Code sent to +911234567890. Enter OTP:
+4. User: 12345
+5. Bot: Login successful.
+6. Bot: Enter channel/chat ID:
+7. User: @examplechannel
+8. Bot: Choose: 1) All media  2) Specific message  3) From message ID to end
+9. User: 1
+10. Bot: Choose: 1) Save locally  2) Download & upload to another channel
+11. User: 2
+12. Bot: Enter destination channel:
+13. User: @destination
+14. Bot: (from script) Parallel downloading started... 35%... Uploading... Done.---✅ Acceptance CriteriaBot uses same config & features as script (parallel downloading, captions, restricted messages).Input/output happens in bot chat instead of terminal.All original functionality remains unchanged.Repo code remains unmodified.A working bot wrapper code is provided that connects Telegram Bot API with the script’s stdin/stdout.
+
+
