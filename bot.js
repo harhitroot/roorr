@@ -15,13 +15,14 @@ const bot = new Telegraf(BOT_TOKEN);
 // User session storage
 const userSessions = new Map();
 
-// Simple progress tracking
+// Simple progress tracking  
 const progressTimers = new Map(); // userId -> intervalId
-const PROGRESS_INTERVAL = 40000; // Send progress every 40 seconds
+const PROGRESS_INTERVAL = 60000; // Send progress every 60 seconds (reduced frequency)
+const errorCounts = new Map(); // Track error counts per user
 
 // Rate limiting for Telegram API calls
 const messageQueue = new Map(); // userId -> array of pending messages
-const rateLimitDelay = 1000; // 1 second between messages
+const rateLimitDelay = 2000; // 2 seconds between messages (increased to prevent 429s)
 const processingQueue = new Set(); // Track which users are being processed
 
 // Bot states
@@ -131,10 +132,22 @@ function startProgressTimer(ctx, userId) {
         clearInterval(progressTimers.get(userId));
     }
 
-    // Send progress message every 40 seconds
+    // Initialize error counter for this user
+    if (!errorCounts.has(userId)) {
+        errorCounts.set(userId, { total: 0, fileExpired: 0, timeout: 0 });
+    }
+
+    // Send progress message every 60 seconds with summary
     const timerId = setInterval(() => {
         try {
-            sendRateLimitedMessage(ctx, '⏳ Processing... Downloads are continuing in the background.');
+            const errors = errorCounts.get(userId) || { total: 0, fileExpired: 0, timeout: 0 };
+            let statusMessage = '⏳ Processing... Downloads continuing in background.';
+            
+            if (errors.total > 0) {
+                statusMessage += `\n📊 Status: ${errors.total} auto-retries (${errors.fileExpired} file refs, ${errors.timeout} timeouts)`;
+            }
+            
+            sendRateLimitedMessage(ctx, statusMessage);
         } catch (error) {
             console.log('Error sending progress message:', error.message);
         }
@@ -188,10 +201,12 @@ async function processMessageQueue(userId) {
         } catch (error) {
             if (error.message.includes('429') && retries > 0) {
                 // Handle rate limit with exponential backoff
-                const waitTime = error.response?.parameters?.retry_after || 5;
-                console.log(`⏳ Rate limited, waiting ${waitTime} seconds before retry...`);
+                const waitTime = error.response?.parameters?.retry_after || 15;
+                console.log(`⏳ Rate limited (429), waiting ${waitTime} seconds before retry...`);
                 
-                await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
+                // Increase wait time to prevent further rate limiting
+                const actualWaitTime = Math.max(waitTime * 1000, 15000); // At least 15 seconds
+                await new Promise(resolve => setTimeout(resolve, actualWaitTime));
                 
                 // Re-queue with reduced retries
                 queue.unshift({ message, retries: retries - 1, resolve, reject, ctx });
@@ -314,12 +329,55 @@ function spawnCliProcess(userId, ctx) {
             } else if (output.includes('[INFO]') || output.includes('Processing message') || output.includes('Starting direct file download') || output.includes('Connection to') || output.includes('File lives in another DC')) {
                 // Skip verbose debug messages
             } else if (output.includes('FILE_REFERENCE_EXPIRED')) {
-                // Handle file reference expired errors - don't spam user
+                // Handle file reference expired errors silently - script auto-retries
                 console.log(`📋 File reference expired for a message, script will retry automatically`);
-                // Only send this type of error occasionally to avoid spam
-            } else if (output.includes('❌') || output.includes('Error') || output.includes('Failed') || output.includes('Exception')) {
-                // Send error messages with rate limiting
+                
+                // Track error count for summary
+                const userId = ctx.from.id;
+                if (!errorCounts.has(userId)) {
+                    errorCounts.set(userId, { total: 0, fileExpired: 0, timeout: 0 });
+                }
+                const errors = errorCounts.get(userId);
+                errors.total++;
+                errors.fileExpired++;
+                // Don't send these to user - they're handled automatically
+            } else if (output.includes('Timeout') && output.includes('503')) {
+                // Handle timeout errors silently - script auto-retries
+                console.log(`⏱️ Network timeout occurred, script will retry automatically`);
+                
+                // Track timeout count
+                const userId = ctx.from.id;
+                if (!errorCounts.has(userId)) {
+                    errorCounts.set(userId, { total: 0, fileExpired: 0, timeout: 0 });
+                }
+                const errors = errorCounts.get(userId);
+                errors.total++;
+                errors.timeout++;
+                // Don't spam user with timeout messages
+            } else if (output.includes('Download attempt') && output.includes('failed')) {
+                // Handle individual download attempt failures silently
+                console.log(`🔄 Download attempt failed, script will retry automatically`);
+                // Only log, don't send to user to avoid spam
+            } else if (output.includes('❌') && (output.includes('Max retries reached') || output.includes('permanently failed'))) {
+                // Only send final failures after all retries exhausted
                 sendRateLimitedMessage(ctx, `🚨 ${output}`);
+            } else if (output.includes('❌') || output.includes('Error') || output.includes('Failed') || output.includes('Exception')) {
+                // Filter out common auto-retry errors, only send critical ones
+                const criticalErrors = [
+                    'CHAT_FORWARDS_RESTRICTED',
+                    'AUTH_KEY_INVALID',
+                    'USER_DEACTIVATED_BAN',
+                    'PHONE_NUMBER_INVALID',
+                    'SESSION_EXPIRED'
+                ];
+                
+                const isCritical = criticalErrors.some(errorType => output.includes(errorType));
+                if (isCritical) {
+                    sendRateLimitedMessage(ctx, `🚨 ${output}`);
+                } else {
+                    // Log but don't spam user with auto-retry errors
+                    console.log(`⚠️ Non-critical error (auto-handled): ${output}`);
+                }
             } else if (output.includes('✅') || output.includes('Downloaded') || output.includes('complete')) {
                 // Send success messages with rate limiting
                 sendRateLimitedMessage(ctx, `✅ ${output}`);
@@ -370,10 +428,20 @@ function spawnCliProcess(userId, ctx) {
                 startProgressTimer(ctx, userId);
             } else if (output.includes('Done') || output.includes('Completed') || output.includes('Finished')) {
                 session.state = STATES.IDLE;
-                sendRateLimitedMessage(ctx, '🎉 Process completed! Use /start to begin a new session.');
+                
+                // Send completion summary with error stats
+                const errors = errorCounts.get(userId) || { total: 0, fileExpired: 0, timeout: 0 };
+                let completionMessage = '🎉 Process completed! Use /start to begin a new session.';
+                
+                if (errors.total > 0) {
+                    completionMessage += `\n📊 Final Summary: ${errors.total} errors were auto-handled (${errors.fileExpired} file references, ${errors.timeout} timeouts)`;
+                }
+                
+                sendRateLimitedMessage(ctx, completionMessage);
                 updateProgress("completed", "All tasks completed successfully", 100, 100);
 
-                // Stop progress timer when done
+                // Clear error counts and stop progress timer
+                errorCounts.delete(userId);
                 stopProgressTimer(userId);
 
                 // Reset to idle after 30 seconds
