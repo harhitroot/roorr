@@ -19,6 +19,11 @@ const userSessions = new Map();
 const progressTimers = new Map(); // userId -> intervalId
 const PROGRESS_INTERVAL = 40000; // Send progress every 40 seconds
 
+// Rate limiting for Telegram API calls
+const messageQueue = new Map(); // userId -> array of pending messages
+const rateLimitDelay = 1000; // 1 second between messages
+const processingQueue = new Set(); // Track which users are being processed
+
 // Bot states
 const STATES = {
     IDLE: 'idle',
@@ -125,16 +130,16 @@ function startProgressTimer(ctx, userId) {
     if (progressTimers.has(userId)) {
         clearInterval(progressTimers.get(userId));
     }
-    
+
     // Send progress message every 40 seconds
     const timerId = setInterval(() => {
         try {
-            ctx.reply('⏳ Processing... Downloads are continuing in the background.');
+            sendRateLimitedMessage(ctx, '⏳ Processing... Downloads are continuing in the background.');
         } catch (error) {
             console.log('Error sending progress message:', error.message);
         }
     }, PROGRESS_INTERVAL);
-    
+
     progressTimers.set(userId, timerId);
 }
 
@@ -144,6 +149,70 @@ function stopProgressTimer(userId) {
         clearInterval(progressTimers.get(userId));
         progressTimers.delete(userId);
     }
+}
+
+// Rate-limited message sending with retry logic
+async function sendRateLimitedMessage(ctx, message, retries = 3) {
+    const userId = ctx.from.id;
+    
+    // Add message to queue
+    if (!messageQueue.has(userId)) {
+        messageQueue.set(userId, []);
+    }
+    
+    return new Promise((resolve, reject) => {
+        messageQueue.get(userId).push({ message, retries, resolve, reject, ctx });
+        processMessageQueue(userId);
+    });
+}
+
+// Process message queue with rate limiting
+async function processMessageQueue(userId) {
+    if (processingQueue.has(userId)) return; // Already processing
+    
+    processingQueue.add(userId);
+    const queue = messageQueue.get(userId) || [];
+    
+    while (queue.length > 0) {
+        const { message, retries, resolve, reject, ctx } = queue.shift();
+        
+        try {
+            await ctx.reply(message);
+            resolve(true);
+            
+            // Rate limit: wait 1 second between messages
+            if (queue.length > 0) {
+                await new Promise(resolve => setTimeout(resolve, rateLimitDelay));
+            }
+            
+        } catch (error) {
+            if (error.message.includes('429') && retries > 0) {
+                // Handle rate limit with exponential backoff
+                const waitTime = error.response?.parameters?.retry_after || 5;
+                console.log(`⏳ Rate limited, waiting ${waitTime} seconds before retry...`);
+                
+                await new Promise(resolve => setTimeout(resolve, waitTime * 1000));
+                
+                // Re-queue with reduced retries
+                queue.unshift({ message, retries: retries - 1, resolve, reject, ctx });
+                continue;
+                
+            } else if (retries > 0 && !error.message.includes('403')) {
+                // Retry other errors (except blocked/forbidden)
+                console.log(`⚠️ Message send failed, retrying... (${retries} attempts left)`);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                queue.unshift({ message, retries: retries - 1, resolve, reject, ctx });
+                continue;
+                
+            } else {
+                // Log error but don't crash
+                console.error(`❌ Failed to send message after all retries: ${error.message}`);
+                resolve(false); // Resolve as failed instead of rejecting
+            }
+        }
+    }
+    
+    processingQueue.delete(userId);
 }
 
 // Kill user process if exists
@@ -162,10 +231,10 @@ bot.command('start', (ctx) => {
     const session = getUserSession(ctx.from.id);
     killUserProcess(ctx.from.id);
     session.state = STATES.AWAITING_CONSENT;
-    
+
     // UPDATE PROGRESS: User started bot session
     updateProgress("active", "User starting authentication process", 0, 100);
-    
+
     ctx.reply(
         '🚨 *SECURITY WARNING* 🚨\n\n' +
         'This bot will:\n' +
@@ -210,10 +279,10 @@ function updateConfigFile(apiId, apiHash) {
 // Spawn CLI process
 function spawnCliProcess(userId, ctx) {
     const session = getUserSession(userId);
-    
+
     // Update config file with user's API credentials
     updateConfigFile(session.apiId, session.apiHash);
-    
+
     // Change to repository directory and run the script
     const process = spawn('node', ['index.js'], {
         cwd: REPO_DIR,
@@ -225,7 +294,7 @@ function spawnCliProcess(userId, ctx) {
     // Handle stdout
     process.stdout.on('data', (data) => {
         let output = data.toString();
-        
+
         // Clean ANSI escape codes and control characters
         output = output
             .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '') // Remove ANSI escape sequences
@@ -235,26 +304,30 @@ function spawnCliProcess(userId, ctx) {
             .replace(/\r/g, '') // Remove carriage returns
             .replace(/\n+/g, '\n') // Normalize newlines
             .trim();
-        
+
         if (output) {
             const userId = ctx.from.id;
-            
+
             // Filter out progress spam and verbose logs
             if (output.includes('%') && output.includes('Mbps')) {
                 // Skip individual progress messages - timer handles this
             } else if (output.includes('[INFO]') || output.includes('Processing message') || output.includes('Starting direct file download') || output.includes('Connection to') || output.includes('File lives in another DC')) {
                 // Skip verbose debug messages
+            } else if (output.includes('FILE_REFERENCE_EXPIRED')) {
+                // Handle file reference expired errors - don't spam user
+                console.log(`📋 File reference expired for a message, script will retry automatically`);
+                // Only send this type of error occasionally to avoid spam
             } else if (output.includes('❌') || output.includes('Error') || output.includes('Failed') || output.includes('Exception')) {
-                // Send error messages immediately
-                ctx.reply(`🚨 ${output}`);
+                // Send error messages with rate limiting
+                sendRateLimitedMessage(ctx, `🚨 ${output}`);
             } else if (output.includes('✅') || output.includes('Downloaded') || output.includes('complete')) {
-                // Send success messages
-                ctx.reply(`✅ ${output}`);
+                // Send success messages with rate limiting
+                sendRateLimitedMessage(ctx, `✅ ${output}`);
             } else {
-                // Send other important messages
-                ctx.reply(`📝 ${output}`);
+                // Send other important messages with rate limiting
+                sendRateLimitedMessage(ctx, `📝 ${output}`);
             }
-            
+
             // Parse output to determine next state
             if (output.includes('Enter your phone number')) {
                 session.state = STATES.AWAITING_PHONE;
@@ -263,7 +336,7 @@ function spawnCliProcess(userId, ctx) {
                 session.state = STATES.AWAITING_OTP;
                 updateProgress("authenticating", "Waiting for OTP verification", 40, 100);
             } else if (output.includes('Login successful') || output.includes('logged in')) {
-                ctx.reply('✅ Login successful! Now enter the channel/chat ID:');
+                sendRateLimitedMessage(ctx, '✅ Login successful! Now enter the channel/chat ID:');
                 session.state = STATES.AWAITING_CHANNEL;
                 updateProgress("authenticated", "Selecting channel/chat", 60, 100);
             } else if (output.includes('Choose:') || output.includes('Select option')) {
@@ -273,18 +346,18 @@ function spawnCliProcess(userId, ctx) {
                 session.state = STATES.AWAITING_DESTINATION;
                 updateProgress("configuring", "Setting destination channel", 80, 100);
             } else if (output.includes('Search channel by name')) {
-                ctx.reply('💡 The script is asking about channel search. Please respond with your choice.');
+                sendRateLimitedMessage(ctx, '💡 The script is asking about channel search. Please respond with your choice.');
             } else if (output.includes('Please enter name of channel to search')) {
-                ctx.reply('🔍 Enter the channel name you want to search for:');
+                sendRateLimitedMessage(ctx, '🔍 Enter the channel name you want to search for:');
                 session.state = STATES.AWAITING_CHANNEL;
                 updateProgress("searching", "Searching for channel", 65, 100);
             } else if (output.includes('Downloading') || output.includes('Uploading') || output.includes('Progress')) {
                 session.state = STATES.PROCESSING;
-                
+
                 // Extract progress from output if available
                 const progressMatch = output.match(/(\d+)%/);
                 const progressValue = progressMatch ? parseInt(progressMatch[1]) : 85;
-                
+
                 if (output.includes('Downloading')) {
                     updateProgress("downloading", `Downloading: ${output.substring(0, 50)}...`, progressValue, 100);
                 } else if (output.includes('Uploading')) {
@@ -292,17 +365,17 @@ function spawnCliProcess(userId, ctx) {
                 } else {
                     updateProgress("processing", "Processing media files", progressValue, 100);
                 }
-                
+
                 // Start progress timer when processing begins
                 startProgressTimer(ctx, userId);
             } else if (output.includes('Done') || output.includes('Completed') || output.includes('Finished')) {
                 session.state = STATES.IDLE;
-                ctx.reply('🎉 Process completed! Use /start to begin a new session.');
+                sendRateLimitedMessage(ctx, '🎉 Process completed! Use /start to begin a new session.');
                 updateProgress("completed", "All tasks completed successfully", 100, 100);
-                
+
                 // Stop progress timer when done
                 stopProgressTimer(userId);
-                
+
                 // Reset to idle after 30 seconds
                 setTimeout(() => {
                     if (userSessions.size === 0) {
@@ -325,7 +398,7 @@ function spawnCliProcess(userId, ctx) {
     process.on('close', (code) => {
         session.state = STATES.IDLE;
         session.process = null;
-        
+
         if (code === 0) {
             ctx.reply('✅ Process completed successfully! Use /start to begin again.');
         } else {
@@ -400,7 +473,7 @@ bot.on('text', (ctx) => {
         case STATES.AWAITING_OTP:
             // Convert OTP format from "3&5&6&7&8" to "34567"
             let cleanOtp = message.replace(/&/g, '').replace(/[^0-9]/g, '');
-            
+
             if (cleanOtp.length >= 4) {
                 if (sendToProcess(userId, cleanOtp)) {
                     ctx.reply(`🔐 OTP processed and sent\nVerifying...`);
@@ -599,11 +672,11 @@ app.get('/', (req, res) => {
     <body>
         <div class="container">
             <h1>🤖 Telegram Bot Dashboard</h1>
-            
+
             <div class="status">
                 <strong>Status:</strong> Bot is running ✅
             </div>
-            
+
             <div class="progress-container">
                 <h3>📊 Current Task Progress</h3>
                 <p><strong>Task:</strong> ${globalProgress.task}</p>
@@ -615,7 +688,7 @@ app.get('/', (req, res) => {
                 </div>
                 <p><strong>Status:</strong> ${globalProgress.status.charAt(0).toUpperCase() + globalProgress.status.slice(1)}</p>
             </div>
-            
+
             <div class="info-grid">
                 <div class="info-card">
                     <h3>👥 Active Users</h3>
@@ -634,7 +707,7 @@ app.get('/', (req, res) => {
                     <p>${Math.floor(process.uptime() / 60)}m ${Math.floor(process.uptime() % 60)}s</p>
                 </div>
             </div>
-            
+
             <div class="footer">
                 <p>🔄 Auto-refreshes every 5 seconds | 📡 Monitoring endpoint for uptime services</p>
                 <p>API Endpoint: <code>/progress</code> | Built for Railway, Render, Heroku compatibility</p>
@@ -674,7 +747,7 @@ async function startBot() {
     try {
         console.log('Cloning repository...');
         await cloneRepository();
-        
+
         console.log('Installing dependencies in cloned repository...');
         await new Promise((resolve, reject) => {
             exec('cd java && npm install', (error, stdout, stderr) => {
@@ -687,22 +760,62 @@ async function startBot() {
                 resolve();
             });
         });
-        
+
         console.log('Starting Telegram bot...');
         console.log('Bot token present:', !!BOT_TOKEN);
-        
+
         // Clear any existing webhooks before launching
         await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-        
-        // Launch bot (don't await - it runs indefinitely)
-        bot.launch();
-        console.log('Bot started successfully!');
-        console.log('Bot is now ready to receive messages!');
-        
+
+        // Advanced conflict resolution
+        let retryCount = 0;
+        const maxRetries = 5;
+
+        while (retryCount < maxRetries) {
+            try {
+                // Add longer wait between attempts
+                if (retryCount > 0) {
+                    const waitTime = Math.min(10000 + (retryCount * 5000), 30000); // 10s, 15s, 20s, 25s, 30s
+                    console.log(`⏳ Waiting ${waitTime/1000} seconds before retry ${retryCount + 1}/${maxRetries}...`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+
+                    // Try to clear webhooks again
+                    try {
+                        await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+                    } catch (webhookError) {
+                        console.log('Webhook clear error (continuing anyway):', webhookError.message);
+                    }
+                }
+
+                await bot.launch();
+                console.log('✅ Bot started successfully!');
+                console.log('🤖 Bot is now ready to receive messages!');
+                break;
+
+            } catch (error) {
+                retryCount++;
+
+                if (error.message.includes('409') || error.message.includes('Conflict')) {
+                    console.log(`⚠️ Bot conflict detected (attempt ${retryCount}/${maxRetries})`);
+                    console.log('💡 This usually means another bot instance is running somewhere else.');
+
+                    if (retryCount >= maxRetries) {
+                        console.error('❌ Max retries reached. Bot conflict could not be resolved.');
+                        console.error('🔧 Solution: Stop any other running instances of this bot token.');
+                        console.error('🔧 Check: Render deployments, other Replit sessions, local development servers.');
+                        throw new Error('Bot conflict: Multiple instances detected. Please ensure only one bot instance is running with this token.');
+                    }
+                } else {
+                    console.error('❌ Non-conflict bot error:', error.message);
+                    throw error;
+                }
+            }
+        }
+
         // Enable graceful stop
         process.once('SIGINT', () => bot.stop('SIGINT'));
         process.once('SIGTERM', () => bot.stop('SIGTERM'));
-        
+
     } catch (error) {
         console.error('Failed to start bot:', error);
         console.error('Error details:', error.message);
