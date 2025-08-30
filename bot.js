@@ -705,11 +705,15 @@ process.on('SIGINT', () => {
     for (const [userId, session] of userSessions) {
         killUserProcess(userId);
     }
-    // Close Express server
-    server.close(() => {
-        console.log('Express server closed');
+    // Close Express server if it exists
+    if (server) {
+        server.close(() => {
+            console.log('Express server closed');
+            process.exit(0);
+        });
+    } else {
         process.exit(0);
-    });
+    }
 });
 
 process.on('SIGTERM', () => {
@@ -718,11 +722,15 @@ process.on('SIGTERM', () => {
     for (const [userId, session] of userSessions) {
         killUserProcess(userId);
     }
-    // Close Express server
-    server.close(() => {
-        console.log('Express server closed');
+    // Close Express server if it exists
+    if (server) {
+        server.close(() => {
+            console.log('Express server closed');
+            process.exit(0);
+        });
+    } else {
         process.exit(0);
-    });
+    }
 });
 
 // Express.js Web Server Setup
@@ -936,6 +944,9 @@ app.get('/health', (req, res) => {
     });
 });
 
+// Declare server variable for proper cleanup
+let server;
+
 // Vercel serverless function export
 if (process.env.VERCEL) {
     // For Vercel: Export the Express app as a serverless function
@@ -945,7 +956,7 @@ if (process.env.VERCEL) {
     initializeBot();
 } else {
     // For other platforms (Replit, Railway, etc.): Start server normally
-    const server = app.listen(PORT, '0.0.0.0', () => {
+    server = app.listen(PORT, '0.0.0.0', () => {
         console.log(`🌐 Web dashboard running on port ${PORT}`);
         console.log(`📊 Dashboard: http://localhost:${PORT}`);
         console.log(`📡 Progress API: http://localhost:${PORT}/progress`);
