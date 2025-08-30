@@ -22,8 +22,19 @@ const errorCounts = new Map(); // Track error counts per user
 
 // Rate limiting for Telegram API calls
 const messageQueue = new Map(); // userId -> array of pending messages
-const rateLimitDelay = 2000; // 2 seconds between messages (increased to prevent 429s)
+const rateLimitDelay = 5000; // 5 seconds between messages (increased to prevent spam)
 const processingQueue = new Set(); // Track which users are being processed
+
+// Speed monitoring for web dashboard
+let speedMonitor = {
+    currentSpeed: 0,
+    averageSpeed: 0,
+    peakSpeed: 0,
+    bytesTransferred: 0,
+    testStartTime: Date.now(),
+    isTestingSpeed: false,
+    lastTestResult: null
+};
 
 // Bot states
 const STATES = {
@@ -48,6 +59,69 @@ let globalProgress = {
     activeUsers: 0,
     lastUpdate: new Date().toISOString()
 };
+
+// Internet speed test function
+async function testInternetSpeed() {
+    if (speedMonitor.isTestingSpeed) return speedMonitor.lastTestResult;
+    
+    speedMonitor.isTestingSpeed = true;
+    speedMonitor.testStartTime = Date.now();
+    
+    try {
+        // Test download speed using a reliable test file
+        const testUrl = 'https://httpbin.org/bytes/1048576'; // 1MB test file
+        const startTime = Date.now();
+        
+        const response = await fetch(testUrl);
+        const arrayBuffer = await response.arrayBuffer();
+        
+        const endTime = Date.now();
+        const duration = (endTime - startTime) / 1000; // seconds
+        const bytes = arrayBuffer.byteLength;
+        const bitsPerSecond = (bytes * 8) / duration;
+        const mbps = bitsPerSecond / (1024 * 1024);
+        
+        speedMonitor.currentSpeed = mbps;
+        speedMonitor.bytesTransferred = bytes;
+        
+        // Update peak speed
+        if (mbps > speedMonitor.peakSpeed) {
+            speedMonitor.peakSpeed = mbps;
+        }
+        
+        // Calculate average speed (simple moving average)
+        if (speedMonitor.averageSpeed === 0) {
+            speedMonitor.averageSpeed = mbps;
+        } else {
+            speedMonitor.averageSpeed = (speedMonitor.averageSpeed * 0.7) + (mbps * 0.3);
+        }
+        
+        speedMonitor.lastTestResult = {
+            speed: mbps,
+            timestamp: new Date().toISOString(),
+            status: 'success'
+        };
+        
+        return speedMonitor.lastTestResult;
+        
+    } catch (error) {
+        console.error('Speed test failed:', error.message);
+        speedMonitor.lastTestResult = {
+            speed: 0,
+            timestamp: new Date().toISOString(),
+            status: 'failed',
+            error: error.message
+        };
+        return speedMonitor.lastTestResult;
+    } finally {
+        speedMonitor.isTestingSpeed = false;
+    }
+}
+
+// Run speed test every 30 seconds
+setInterval(testInternetSpeed, 30000);
+// Run initial speed test
+setTimeout(testInternetSpeed, 2000);
 
 // Clone repository on startup
 async function cloneRepository() {
@@ -306,7 +380,12 @@ function spawnCliProcess(userId, ctx) {
 
     session.process = process;
 
-    // Handle stdout
+    // Buffer for collecting output chunks to prevent spam
+    let outputBuffer = '';
+    let lastMessageTime = 0;
+    const MESSAGE_THROTTLE_DELAY = 5000; // 5 seconds between messages
+
+    // Handle stdout with buffering and throttling
     process.stdout.on('data', (data) => {
         let output = data.toString();
 
@@ -321,72 +400,91 @@ function spawnCliProcess(userId, ctx) {
             .trim();
 
         if (output) {
+            // Add to buffer instead of immediately sending
+            outputBuffer += output + ' ';
+
             const userId = ctx.from.id;
+            const currentTime = Date.now();
 
-            // Filter out progress spam and verbose logs
-            if (output.includes('%') && output.includes('Mbps')) {
-                // Skip individual progress messages - timer handles this
-            } else if (output.includes('[INFO]') || output.includes('Processing message') || output.includes('Starting direct file download') || output.includes('Connection to') || output.includes('File lives in another DC')) {
-                // Skip verbose debug messages
-            } else if (output.includes('FILE_REFERENCE_EXPIRED')) {
-                // Handle file reference expired errors silently - script auto-retries
-                console.log(`📋 File reference expired for a message, script will retry automatically`);
+            // Check if we should send buffered messages (after 5 second delay)
+            if (currentTime - lastMessageTime >= MESSAGE_THROTTLE_DELAY || 
+                output.includes('Enter your phone number') || 
+                output.includes('Enter OTP') || 
+                output.includes('Login successful') ||
+                output.includes('Choose:') ||
+                output.includes('Search channel by name') ||
+                output.includes('Please enter name of channel to search') ||
+                output.includes('✅') ||
+                output.includes('❌')) {
+                
+                // Process the buffered output
+                const processedOutput = outputBuffer.trim();
+                outputBuffer = ''; // Clear buffer
+                lastMessageTime = currentTime;
 
-                // Track error count for summary
-                const userId = ctx.from.id;
-                if (!errorCounts.has(userId)) {
-                    errorCounts.set(userId, { total: 0, fileExpired: 0, timeout: 0 });
+                // Filter out progress spam and verbose logs
+                if (processedOutput.includes('%') && processedOutput.includes('Mbps')) {
+                    // Skip individual progress messages - timer handles this
+                } else if (processedOutput.includes('[INFO]') || processedOutput.includes('Processing message') || processedOutput.includes('Starting direct file download') || processedOutput.includes('Connection to') || processedOutput.includes('File lives in another DC')) {
+                    // Skip verbose debug messages
+                } else if (processedOutput.includes('FILE_REFERENCE_EXPIRED')) {
+                    // Handle file reference expired errors silently - script auto-retries
+                    console.log(`📋 File reference expired for a message, script will retry automatically`);
+
+                    // Track error count for summary
+                    if (!errorCounts.has(userId)) {
+                        errorCounts.set(userId, { total: 0, fileExpired: 0, timeout: 0 });
+                    }
+                    const errors = errorCounts.get(userId);
+                    errors.total++;
+                    errors.fileExpired++;
+                    // Don't send these to user - they're handled automatically
+                } else if (processedOutput.includes('Timeout') && processedOutput.includes('503')) {
+                    // Handle timeout errors silently - script auto-retries
+                    console.log(`⏱️ Network timeout occurred, script will retry automatically`);
+
+                    // Track timeout count
+                    if (!errorCounts.has(userId)) {
+                        errorCounts.set(userId, { total: 0, fileExpired: 0, timeout: 0 });
+                    }
+                    const errors = errorCounts.get(userId);
+                    errors.total++;
+                    errors.timeout++;
+                    // Don't spam user with timeout messages
+                } else if (processedOutput.includes('Download attempt') && processedOutput.includes('failed')) {
+                    // Handle individual download attempt failures silently
+                    console.log(`🔄 Download attempt failed, script will retry automatically`);
+                    // Only log, don't send to user to avoid spam
+                } else if (processedOutput.includes('❌') && (processedOutput.includes('Max retries reached') || processedOutput.includes('permanently failed'))) {
+                    // Only send final failures after all retries exhausted
+                    sendRateLimitedMessage(ctx, `🚨 ${processedOutput}`);
+                } else if (processedOutput.includes('❌') || processedOutput.includes('Error') || processedOutput.includes('Failed') || processedOutput.includes('Exception')) {
+                    // Filter out common auto-retry errors, only send critical ones
+                    const criticalErrors = [
+                        'CHAT_FORWARDS_RESTRICTED',
+                        'AUTH_KEY_INVALID',
+                        'USER_DEACTIVATED_BAN',
+                        'PHONE_NUMBER_INVALID',
+                        'SESSION_EXPIRED'
+                    ];
+
+                    const isCritical = criticalErrors.some(errorType => processedOutput.includes(errorType));
+                    if (isCritical) {
+                        sendRateLimitedMessage(ctx, `🚨 ${processedOutput}`);
+                    } else {
+                        // Log but don't spam user with auto-retry errors
+                        console.log(`⚠️ Non-critical error (auto-handled): ${processedOutput}`);
+                    }
+                } else if (processedOutput.includes('✅') || processedOutput.includes('Downloaded') || processedOutput.includes('complete')) {
+                    // Send success messages with rate limiting
+                    sendRateLimitedMessage(ctx, `✅ ${processedOutput}`);
+                } else if (processedOutput.length > 0) {
+                    // Send other important messages with rate limiting
+                    sendRateLimitedMessage(ctx, `📝 ${processedOutput}`);
                 }
-                const errors = errorCounts.get(userId);
-                errors.total++;
-                errors.fileExpired++;
-                // Don't send these to user - they're handled automatically
-            } else if (output.includes('Timeout') && output.includes('503')) {
-                // Handle timeout errors silently - script auto-retries
-                console.log(`⏱️ Network timeout occurred, script will retry automatically`);
-
-                // Track timeout count
-                const userId = ctx.from.id;
-                if (!errorCounts.has(userId)) {
-                    errorCounts.set(userId, { total: 0, fileExpired: 0, timeout: 0 });
-                }
-                const errors = errorCounts.get(userId);
-                errors.total++;
-                errors.timeout++;
-                // Don't spam user with timeout messages
-            } else if (output.includes('Download attempt') && output.includes('failed')) {
-                // Handle individual download attempt failures silently
-                console.log(`🔄 Download attempt failed, script will retry automatically`);
-                // Only log, don't send to user to avoid spam
-            } else if (output.includes('❌') && (output.includes('Max retries reached') || output.includes('permanently failed'))) {
-                // Only send final failures after all retries exhausted
-                sendRateLimitedMessage(ctx, `🚨 ${output}`);
-            } else if (output.includes('❌') || output.includes('Error') || output.includes('Failed') || output.includes('Exception')) {
-                // Filter out common auto-retry errors, only send critical ones
-                const criticalErrors = [
-                    'CHAT_FORWARDS_RESTRICTED',
-                    'AUTH_KEY_INVALID',
-                    'USER_DEACTIVATED_BAN',
-                    'PHONE_NUMBER_INVALID',
-                    'SESSION_EXPIRED'
-                ];
-
-                const isCritical = criticalErrors.some(errorType => output.includes(errorType));
-                if (isCritical) {
-                    sendRateLimitedMessage(ctx, `🚨 ${output}`);
-                } else {
-                    // Log but don't spam user with auto-retry errors
-                    console.log(`⚠️ Non-critical error (auto-handled): ${output}`);
-                }
-            } else if (output.includes('✅') || output.includes('Downloaded') || output.includes('complete')) {
-                // Send success messages with rate limiting
-                sendRateLimitedMessage(ctx, `✅ ${output}`);
-            } else {
-                // Send other important messages with rate limiting
-                sendRateLimitedMessage(ctx, `📝 ${output}`);
             }
 
-            // Parse output to determine next state
+            // Parse output to determine next state (use original output, not buffered)
             if (output.includes('Enter your phone number')) {
                 session.state = STATES.AWAITING_PHONE;
                 updateProgress("authenticating", "Waiting for phone number", 20, 100);
@@ -723,6 +821,9 @@ app.get('/', (req, res) => {
                 font-size: 1.2em;
                 font-weight: bold;
             }
+            .speed-high { color: #4CAF50; }
+            .speed-medium { color: #FFC107; }
+            .speed-low { color: #f44336; }
             .footer {
                 text-align: center;
                 margin-top: 30px;
@@ -755,6 +856,28 @@ app.get('/', (req, res) => {
                     ${globalProgress.completed}% Complete (${globalProgress.completed}/${globalProgress.total})
                 </div>
                 <p><strong>Status:</strong> ${globalProgress.status.charAt(0).toUpperCase() + globalProgress.status.slice(1)}</p>
+            </div>
+
+            <div class="progress-container">
+                <h3>🌐 Internet Speed Monitor</h3>
+                <div class="info-grid">
+                    <div class="info-card">
+                        <h3>📊 Current Speed</h3>
+                        <p>${speedMonitor.currentSpeed.toFixed(2)} Mbps</p>
+                    </div>
+                    <div class="info-card">
+                        <h3>📈 Average Speed</h3>
+                        <p>${speedMonitor.averageSpeed.toFixed(2)} Mbps</p>
+                    </div>
+                    <div class="info-card">
+                        <h3>🚀 Peak Speed</h3>
+                        <p>${speedMonitor.peakSpeed.toFixed(2)} Mbps</p>
+                    </div>
+                    <div class="info-card">
+                        <h3>⏱️ Last Test</h3>
+                        <p>${speedMonitor.lastTestResult ? new Date(speedMonitor.lastTestResult.timestamp).toLocaleTimeString() : 'Testing...'}</p>
+                    </div>
+                </div>
             </div>
 
             <div class="info-grid">
@@ -792,6 +915,17 @@ app.get('/progress', (req, res) => {
     res.json(globalProgress);
 });
 
+// Speed monitoring API route
+app.get('/speed', (req, res) => {
+    res.json({
+        current: speedMonitor.currentSpeed,
+        average: speedMonitor.averageSpeed,
+        peak: speedMonitor.peakSpeed,
+        lastTest: speedMonitor.lastTestResult,
+        isTestingSpeed: speedMonitor.isTestingSpeed
+    });
+});
+
 // Health check route
 app.get('/health', (req, res) => {
     res.json({
@@ -809,91 +943,126 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`📡 Progress API: http://localhost:${PORT}/progress`);
     console.log(`💚 Health check: http://localhost:${PORT}/health`);
 
-    // *** IMPORTANT CHANGE STARTS HERE ***
-    // Start the bot's complex initialization asynchronously AFTER the web server is listening.
-    // This allows Vercel's readiness probe to succeed quickly.
-    setTimeout(async () => {
-        try {
-            console.log('Cloning repository...');
-            await cloneRepository();
+    // *** VERCEL-COMPATIBLE INITIALIZATION ***
+    // For Vercel: Start bot initialization immediately but don't block deployment
+    // For other platforms: This maintains the same functionality
+    if (process.env.VERCEL) {
+        // On Vercel, start bot initialization without waiting
+        initializeBot();
+    } else {
+        // On other platforms, use small delay as before
+        setTimeout(initializeBot, 1000);
+    }
+});
 
-            console.log('Installing dependencies in cloned repository...');
-            await new Promise((resolve, reject) => {
-                exec('cd java && npm install', (error, stdout, stderr) => {
-                    if (error) {
-                        console.warn('Warning: Could not install dependencies in java directory:', error.message);
-                        // Don't fail here, continue with bot launch
-                    } else {
-                        console.log('Dependencies installed successfully');
-                    }
-                    resolve();
-                });
+// Separate function for bot initialization (non-blocking)
+async function initializeBot() {
+    try {
+        console.log('Cloning repository...');
+        await cloneRepository();
+
+        console.log('Installing dependencies in cloned repository...');
+        await new Promise((resolve, reject) => {
+            exec('cd java && npm install', (error, stdout, stderr) => {
+                if (error) {
+                    console.warn('Warning: Could not install dependencies in java directory:', error.message);
+                    // Don't fail here, continue with bot launch
+                } else {
+                    console.log('Dependencies installed successfully');
+                }
+                resolve();
             });
+        });
 
-            console.log('Starting Telegram bot...');
-            console.log('Bot token present:', !!BOT_TOKEN);
+        console.log('Starting Telegram bot...');
+        console.log('Bot token present:', !!BOT_TOKEN);
 
-            // Clear any existing webhooks before launching
+        // Validate bot token before proceeding
+        if (!BOT_TOKEN || BOT_TOKEN === 'your_bot_token_here') {
+            console.error('❌ Bot token is not properly configured!');
+            console.error('💡 Please set BOT_TOKEN in Secrets tab with a valid bot token from @BotFather');
+            return;
+        }
+
+        // Test bot token validity first
+        try {
+            const botInfo = await bot.telegram.getMe();
+            console.log('✅ Bot token is valid:', botInfo.username);
+        } catch (error) {
+            if (error.response?.error_code === 401) {
+                console.error('❌ Invalid bot token! Please check your BOT_TOKEN in Secrets.');
+                console.error('💡 Get a new token from @BotFather on Telegram');
+            } else {
+                console.error('❌ Bot token validation failed:', error.message);
+            }
+            return;
+        }
+
+        // Clear any existing webhooks before launching (skip if token is invalid)
+        try {
             await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+        } catch (webhookError) {
+            console.log('⚠️ Could not clear webhooks (continuing anyway):', webhookError.message);
+        }
 
-            // Advanced conflict resolution
-            let retryCount = 0;
-            const maxRetries = 5;
+        // Advanced conflict resolution
+        let retryCount = 0;
+        const maxRetries = 5;
 
-            while (retryCount < maxRetries) {
-                try {
-                    // Add longer wait between attempts
-                    if (retryCount > 0) {
-                        const waitTime = Math.min(10000 + (retryCount * 5000), 30000); // 10s, 15s, 20s, 25s, 30s
-                        console.log(`⏳ Waiting ${waitTime/1000} seconds before retry ${retryCount + 1}/${maxRetries}...`);
-                        await new Promise(resolve => setTimeout(resolve, waitTime));
+        while (retryCount < maxRetries) {
+            try {
+                // Add longer wait between attempts
+                if (retryCount > 0) {
+                    const waitTime = Math.min(10000 + (retryCount * 5000), 30000); // 10s, 15s, 20s, 25s, 30s
+                    console.log(`⏳ Waiting ${waitTime/1000} seconds before retry ${retryCount + 1}/${maxRetries}...`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
 
-                        // Try to clear webhooks again
-                        try {
-                            await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-                        } catch (webhookError) {
-                            console.log('Webhook clear error (continuing anyway):', webhookError.message);
-                        }
-                    }
-
-                    await bot.launch();
-                    console.log('✅ Bot started successfully!');
-                    console.log('🤖 Bot is now ready to receive messages!');
-                    break;
-
-                } catch (error) {
-                    retryCount++;
-
-                    if (error.message.includes('409') || error.message.includes('Conflict')) {
-                        console.log(`⚠️ Bot conflict detected (attempt ${retryCount}/${maxRetries})`);
-                        console.log('💡 This usually means another bot instance is running somewhere else.');
-
-                        if (retryCount >= maxRetries) {
-                            console.error('❌ Max retries reached. Bot conflict could not be resolved.');
-                            console.error('🔧 Solution: Stop any other running instances of this bot token.');
-                            console.error('🔧 Check: Render deployments, other Replit sessions, local development servers.');
-                            throw new Error('Bot conflict: Multiple instances detected. Please ensure only one bot instance is running with this token.');
-                        }
-                    } else {
-                        console.error('❌ Non-conflict bot error:', error.message);
-                        throw error;
+                    // Try to clear webhooks again
+                    try {
+                        await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+                    } catch (webhookError) {
+                        console.log('Webhook clear error (continuing anyway):', webhookError.message);
                     }
                 }
+
+                await bot.launch();
+                console.log('✅ Bot started successfully!');
+                console.log('🤖 Bot is now ready to receive messages!');
+                break;
+
+            } catch (error) {
+                retryCount++;
+
+                if (error.message.includes('409') || error.message.includes('Conflict')) {
+                    console.log(`⚠️ Bot conflict detected (attempt ${retryCount}/${maxRetries})`);
+                    console.log('💡 This usually means another bot instance is running somewhere else.');
+
+                    if (retryCount >= maxRetries) {
+                        console.error('❌ Max retries reached. Bot conflict could not be resolved.');
+                        console.error('🔧 Solution: Stop any other running instances of this bot token.');
+                        console.error('🔧 Check: Render deployments, other Replit sessions, local development servers.');
+                        console.log('⚠️ Web server continues running without bot functionality.');
+                        return; // Don't throw error, just return
+                    }
+                } else {
+                    console.error('❌ Non-conflict bot error:', error.message);
+                    console.log('⚠️ Web server continues running without bot functionality.');
+                    return; // Don't throw error, just return
+                }
             }
-
-            // Enable graceful stop
-            process.once('SIGINT', () => bot.stop('SIGINT'));
-            process.once('SIGTERM', () => bot.stop('SIGTERM'));
-
-        } catch (error) {
-            console.error('Failed to start bot:', error);
-            console.error('Error details:', error.message);
-            // IMPORTANT: Do NOT call process.exit(1) here, as it would kill the web server
-            // process.exit(1); // <--- REMOVED THIS LINE
         }
-    }, 1000); // Give the Express server 1 second to fully initialize and be ready for probes
-    // *** IMPORTANT CHANGE ENDS HERE ***
-});
+
+        // Enable graceful stop
+        process.once('SIGINT', () => bot.stop('SIGINT'));
+        process.once('SIGTERM', () => bot.stop('SIGTERM'));
+
+    } catch (error) {
+        console.error('Failed to start bot:', error);
+        console.error('Error details:', error.message);
+        console.log('⚠️ Web server continues running without bot functionality.');
+        // Don't exit process - let web server continue running
+    }
+}
 
 // Log environment info for debugging
 console.log('🌐 Environment Info:');
