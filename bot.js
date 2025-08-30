@@ -7,7 +7,7 @@ const express = require('express');
 // Bot token from environment
 const BOT_TOKEN = process.env.BOT_TOKEN || 'your_bot_token_here';
 const REPO_URL = 'https://github.com/adamfarreledu-cloud/java.git';
-const REPO_DIR = './java';
+const REPO_DIR = './java'; // Directory where the external repo will be cloned
 
 // Initialize bot
 const bot = new Telegraf(BOT_TOKEN);
@@ -15,7 +15,7 @@ const bot = new Telegraf(BOT_TOKEN);
 // User session storage
 const userSessions = new Map();
 
-// Simple progress tracking  
+// Simple progress tracking
 const progressTimers = new Map(); // userId -> intervalId
 const PROGRESS_INTERVAL = 60000; // Send progress every 60 seconds (reduced frequency)
 const errorCounts = new Map(); // Track error counts per user
@@ -142,11 +142,11 @@ function startProgressTimer(ctx, userId) {
         try {
             const errors = errorCounts.get(userId) || { total: 0, fileExpired: 0, timeout: 0 };
             let statusMessage = '⏳ Processing... Downloads continuing in background.';
-            
+
             if (errors.total > 0) {
                 statusMessage += `\n📊 Status: ${errors.total} auto-retries (${errors.fileExpired} file refs, ${errors.timeout} timeouts)`;
             }
-            
+
             sendRateLimitedMessage(ctx, statusMessage);
         } catch (error) {
             console.log('Error sending progress message:', error.message);
@@ -167,12 +167,12 @@ function stopProgressTimer(userId) {
 // Rate-limited message sending with retry logic
 async function sendRateLimitedMessage(ctx, message, retries = 3) {
     const userId = ctx.from.id;
-    
+
     // Add message to queue
     if (!messageQueue.has(userId)) {
         messageQueue.set(userId, []);
     }
-    
+
     return new Promise((resolve, reject) => {
         messageQueue.get(userId).push({ message, retries, resolve, reject, ctx });
         processMessageQueue(userId);
@@ -182,43 +182,43 @@ async function sendRateLimitedMessage(ctx, message, retries = 3) {
 // Process message queue with rate limiting
 async function processMessageQueue(userId) {
     if (processingQueue.has(userId)) return; // Already processing
-    
+
     processingQueue.add(userId);
     const queue = messageQueue.get(userId) || [];
-    
+
     while (queue.length > 0) {
         const { message, retries, resolve, reject, ctx } = queue.shift();
-        
+
         try {
             await ctx.reply(message);
             resolve(true);
-            
+
             // Rate limit: wait 1 second between messages
             if (queue.length > 0) {
                 await new Promise(resolve => setTimeout(resolve, rateLimitDelay));
             }
-            
+
         } catch (error) {
             if (error.message.includes('429') && retries > 0) {
                 // Handle rate limit with exponential backoff
                 const waitTime = error.response?.parameters?.retry_after || 15;
                 console.log(`⏳ Rate limited (429), waiting ${waitTime} seconds before retry...`);
-                
+
                 // Increase wait time to prevent further rate limiting
                 const actualWaitTime = Math.max(waitTime * 1000, 15000); // At least 15 seconds
                 await new Promise(resolve => setTimeout(resolve, actualWaitTime));
-                
+
                 // Re-queue with reduced retries
                 queue.unshift({ message, retries: retries - 1, resolve, reject, ctx });
                 continue;
-                
+
             } else if (retries > 0 && !error.message.includes('403')) {
                 // Retry other errors (except blocked/forbidden)
                 console.log(`⚠️ Message send failed, retrying... (${retries} attempts left)`);
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 queue.unshift({ message, retries: retries - 1, resolve, reject, ctx });
                 continue;
-                
+
             } else {
                 // Log error but don't crash
                 console.error(`❌ Failed to send message after all retries: ${error.message}`);
@@ -226,7 +226,7 @@ async function processMessageQueue(userId) {
             }
         }
     }
-    
+
     processingQueue.delete(userId);
 }
 
@@ -312,10 +312,10 @@ function spawnCliProcess(userId, ctx) {
 
         // Clean ANSI escape codes and control characters
         output = output
-            .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '') // Remove ANSI escape sequences
-            .replace(/\x1b\[[0-9]*[ABCD]/g, '') // Remove cursor movement
-            .replace(/\x1b\[[0-9]*[JK]/g, '') // Remove clear sequences
-            .replace(/\x1b\[[0-9]*[G]/g, '') // Remove cursor positioning
+            .replace(/\x1b\$[0-9;]*[a-zA-Z]/g, '') // Remove ANSI escape sequences
+            .replace(/\x1b\$[0-9]*[ABCD]/g, '') // Remove cursor movement
+            .replace(/\x1b\$[0-9]*[JK]/g, '') // Remove clear sequences
+            .replace(/\x1b\$[0-9]*[G]/g, '') // Remove cursor positioning
             .replace(/\r/g, '') // Remove carriage returns
             .replace(/\n+/g, '\n') // Normalize newlines
             .trim();
@@ -331,7 +331,7 @@ function spawnCliProcess(userId, ctx) {
             } else if (output.includes('FILE_REFERENCE_EXPIRED')) {
                 // Handle file reference expired errors silently - script auto-retries
                 console.log(`📋 File reference expired for a message, script will retry automatically`);
-                
+
                 // Track error count for summary
                 const userId = ctx.from.id;
                 if (!errorCounts.has(userId)) {
@@ -344,7 +344,7 @@ function spawnCliProcess(userId, ctx) {
             } else if (output.includes('Timeout') && output.includes('503')) {
                 // Handle timeout errors silently - script auto-retries
                 console.log(`⏱️ Network timeout occurred, script will retry automatically`);
-                
+
                 // Track timeout count
                 const userId = ctx.from.id;
                 if (!errorCounts.has(userId)) {
@@ -370,7 +370,7 @@ function spawnCliProcess(userId, ctx) {
                     'PHONE_NUMBER_INVALID',
                     'SESSION_EXPIRED'
                 ];
-                
+
                 const isCritical = criticalErrors.some(errorType => output.includes(errorType));
                 if (isCritical) {
                     sendRateLimitedMessage(ctx, `🚨 ${output}`);
@@ -428,15 +428,15 @@ function spawnCliProcess(userId, ctx) {
                 startProgressTimer(ctx, userId);
             } else if (output.includes('Done') || output.includes('Completed') || output.includes('Finished')) {
                 session.state = STATES.IDLE;
-                
+
                 // Send completion summary with error stats
                 const errors = errorCounts.get(userId) || { total: 0, fileExpired: 0, timeout: 0 };
                 let completionMessage = '🎉 Process completed! Use /start to begin a new session.';
-                
+
                 if (errors.total > 0) {
                     completionMessage += `\n📊 Final Summary: ${errors.total} errors were auto-handled (${errors.fileExpired} file references, ${errors.timeout} timeouts)`;
                 }
-                
+
                 sendRateLimitedMessage(ctx, completionMessage);
                 updateProgress("completed", "All tasks completed successfully", 100, 100);
 
@@ -794,8 +794,8 @@ app.get('/progress', (req, res) => {
 
 // Health check route
 app.get('/health', (req, res) => {
-    res.json({ 
-        status: 'healthy', 
+    res.json({
+        status: 'healthy',
         uptime: process.uptime(),
         timestamp: new Date().toISOString(),
         bot_status: 'running'
@@ -808,88 +808,92 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`📊 Dashboard: http://localhost:${PORT}`);
     console.log(`📡 Progress API: http://localhost:${PORT}/progress`);
     console.log(`💚 Health check: http://localhost:${PORT}/health`);
-});
 
-// Start the bot
-async function startBot() {
-    try {
-        console.log('Cloning repository...');
-        await cloneRepository();
+    // *** IMPORTANT CHANGE STARTS HERE ***
+    // Start the bot's complex initialization asynchronously AFTER the web server is listening.
+    // This allows Vercel's readiness probe to succeed quickly.
+    setTimeout(async () => {
+        try {
+            console.log('Cloning repository...');
+            await cloneRepository();
 
-        console.log('Installing dependencies in cloned repository...');
-        await new Promise((resolve, reject) => {
-            exec('cd java && npm install', (error, stdout, stderr) => {
-                if (error) {
-                    console.warn('Warning: Could not install dependencies in java directory:', error.message);
-                    // Don't fail here, continue with bot launch
-                } else {
-                    console.log('Dependencies installed successfully');
-                }
-                resolve();
+            console.log('Installing dependencies in cloned repository...');
+            await new Promise((resolve, reject) => {
+                exec('cd java && npm install', (error, stdout, stderr) => {
+                    if (error) {
+                        console.warn('Warning: Could not install dependencies in java directory:', error.message);
+                        // Don't fail here, continue with bot launch
+                    } else {
+                        console.log('Dependencies installed successfully');
+                    }
+                    resolve();
+                });
             });
-        });
 
-        console.log('Starting Telegram bot...');
-        console.log('Bot token present:', !!BOT_TOKEN);
+            console.log('Starting Telegram bot...');
+            console.log('Bot token present:', !!BOT_TOKEN);
 
-        // Clear any existing webhooks before launching
-        await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+            // Clear any existing webhooks before launching
+            await bot.telegram.deleteWebhook({ drop_pending_updates: true });
 
-        // Advanced conflict resolution
-        let retryCount = 0;
-        const maxRetries = 5;
+            // Advanced conflict resolution
+            let retryCount = 0;
+            const maxRetries = 5;
 
-        while (retryCount < maxRetries) {
-            try {
-                // Add longer wait between attempts
-                if (retryCount > 0) {
-                    const waitTime = Math.min(10000 + (retryCount * 5000), 30000); // 10s, 15s, 20s, 25s, 30s
-                    console.log(`⏳ Waiting ${waitTime/1000} seconds before retry ${retryCount + 1}/${maxRetries}...`);
-                    await new Promise(resolve => setTimeout(resolve, waitTime));
+            while (retryCount < maxRetries) {
+                try {
+                    // Add longer wait between attempts
+                    if (retryCount > 0) {
+                        const waitTime = Math.min(10000 + (retryCount * 5000), 30000); // 10s, 15s, 20s, 25s, 30s
+                        console.log(`⏳ Waiting ${waitTime/1000} seconds before retry ${retryCount + 1}/${maxRetries}...`);
+                        await new Promise(resolve => setTimeout(resolve, waitTime));
 
-                    // Try to clear webhooks again
-                    try {
-                        await bot.telegram.deleteWebhook({ drop_pending_updates: true });
-                    } catch (webhookError) {
-                        console.log('Webhook clear error (continuing anyway):', webhookError.message);
+                        // Try to clear webhooks again
+                        try {
+                            await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+                        } catch (webhookError) {
+                            console.log('Webhook clear error (continuing anyway):', webhookError.message);
+                        }
                     }
-                }
 
-                await bot.launch();
-                console.log('✅ Bot started successfully!');
-                console.log('🤖 Bot is now ready to receive messages!');
-                break;
+                    await bot.launch();
+                    console.log('✅ Bot started successfully!');
+                    console.log('🤖 Bot is now ready to receive messages!');
+                    break;
 
-            } catch (error) {
-                retryCount++;
+                } catch (error) {
+                    retryCount++;
 
-                if (error.message.includes('409') || error.message.includes('Conflict')) {
-                    console.log(`⚠️ Bot conflict detected (attempt ${retryCount}/${maxRetries})`);
-                    console.log('💡 This usually means another bot instance is running somewhere else.');
+                    if (error.message.includes('409') || error.message.includes('Conflict')) {
+                        console.log(`⚠️ Bot conflict detected (attempt ${retryCount}/${maxRetries})`);
+                        console.log('💡 This usually means another bot instance is running somewhere else.');
 
-                    if (retryCount >= maxRetries) {
-                        console.error('❌ Max retries reached. Bot conflict could not be resolved.');
-                        console.error('🔧 Solution: Stop any other running instances of this bot token.');
-                        console.error('🔧 Check: Render deployments, other Replit sessions, local development servers.');
-                        throw new Error('Bot conflict: Multiple instances detected. Please ensure only one bot instance is running with this token.');
+                        if (retryCount >= maxRetries) {
+                            console.error('❌ Max retries reached. Bot conflict could not be resolved.');
+                            console.error('🔧 Solution: Stop any other running instances of this bot token.');
+                            console.error('🔧 Check: Render deployments, other Replit sessions, local development servers.');
+                            throw new Error('Bot conflict: Multiple instances detected. Please ensure only one bot instance is running with this token.');
+                        }
+                    } else {
+                        console.error('❌ Non-conflict bot error:', error.message);
+                        throw error;
                     }
-                } else {
-                    console.error('❌ Non-conflict bot error:', error.message);
-                    throw error;
                 }
             }
+
+            // Enable graceful stop
+            process.once('SIGINT', () => bot.stop('SIGINT'));
+            process.once('SIGTERM', () => bot.stop('SIGTERM'));
+
+        } catch (error) {
+            console.error('Failed to start bot:', error);
+            console.error('Error details:', error.message);
+            // IMPORTANT: Do NOT call process.exit(1) here, as it would kill the web server
+            // process.exit(1); // <--- REMOVED THIS LINE
         }
-
-        // Enable graceful stop
-        process.once('SIGINT', () => bot.stop('SIGINT'));
-        process.once('SIGTERM', () => bot.stop('SIGTERM'));
-
-    } catch (error) {
-        console.error('Failed to start bot:', error);
-        console.error('Error details:', error.message);
-        process.exit(1);
-    }
-}
+    }, 1000); // Give the Express server 1 second to fully initialize and be ready for probes
+    // *** IMPORTANT CHANGE ENDS HERE ***
+});
 
 // Log environment info for debugging
 console.log('🌐 Environment Info:');
@@ -900,5 +904,6 @@ console.log('- Port:', process.env.PORT || 3000);
 console.log('- Render Environment:', process.env.RENDER ? 'YES' : 'NO');
 console.log('- Bot Token Present:', !!BOT_TOKEN);
 
-// Start the application
-startBot();
+// The original call to startBot() is now removed, as its logic is moved
+// into the setTimeout block within the app.listen() callback.
+// startBot(); // <--- THIS LINE IS REMOVED
